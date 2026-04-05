@@ -8,16 +8,9 @@ import { JointAngles } from '@/lib/poseAnalysis';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import defaultReferenceImage from '@/assets/default-reference-pose.png';
+import defaultReferenceVideo from '@/assets/default-reference-rally.mp4';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
-
-// To add a default reference video:
-// 1. Add your video file to src/assets/ (e.g., default-reference-pose.mp4)
-// 2. Uncomment the line below and update the filename:
-// import defaultReferenceVideo from '@/assets/default-reference-pose.mp4';
-
-// Set to null if no default video is available
-const defaultReferenceVideo = null;
 
 type DefaultReferenceType = 'image' | 'video' | 'none';
 
