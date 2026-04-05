@@ -222,11 +222,27 @@ export default function Index() {
     setIsLoadingCoaching(true);
     setAiCoaching(null);
     try {
-      const {
-        data,
-        error
-      } = await supabase.functions.invoke('ai-pose-coach', {
-        body: {
+      // Get the access token explicitly
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        toast({
+          title: 'Session Expired',
+          description: 'Please sign in again to use AI coaching.',
+          variant: 'destructive'
+        });
+        return null;
+      }
+
+      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-pose-coach`;
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({
           feedback,
           userAngles,
           referenceAngles,
@@ -235,21 +251,23 @@ export default function Index() {
             overallScore: videoAnalysis.overallScore,
             totalFrames: videoAnalysis.totalFrames
           } : undefined
-        }
+        }),
       });
-      if (error) {
-        console.error('AI coaching error:', error);
-        // Check for quota exceeded error
-        if (error.message?.includes('Daily AI coaching limit reached') || error.message?.includes('quota')) {
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (response.status === 429) {
           toast({
             title: 'Daily Limit Reached',
-            description: 'You\'ve used all 10 AI coaching requests for today. Try again tomorrow!',
+            description: errorData.error || 'You\'ve used all AI coaching requests for today.',
             variant: 'destructive'
           });
           return null;
         }
-        throw error;
+        throw new Error(errorData.error || `Request failed with status ${response.status}`);
       }
+
+      const data = await response.json();
       setAiCoaching(data.coaching);
 
       // Update quota info from response
