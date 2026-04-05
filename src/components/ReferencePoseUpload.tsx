@@ -27,9 +27,7 @@ export function ReferencePoseUpload({
 }: ReferencePoseUploadProps) {
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
-  const [defaultReferenceType, setDefaultReferenceType] = useState<DefaultReferenceType>(
-    defaultReferenceVideo ? 'video' : 'image'
-  );
+  const [defaultReferenceType, setDefaultReferenceType] = useState<DefaultReferenceType>('image');
   const [hasLoadedDefault, setHasLoadedDefault] = useState(false);
   const { toast } = useToast();
 
