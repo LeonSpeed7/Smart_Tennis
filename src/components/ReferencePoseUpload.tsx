@@ -8,7 +8,7 @@ import { JointAngles } from '@/lib/poseAnalysis';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import defaultReferenceImage from '@/assets/default-reference-pose.png';
-import defaultReferenceVideo from '@/assets/default-reference-rally.mp4';
+const defaultReferenceVideo = '/default-reference-rally.mp4';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 
