@@ -342,83 +342,40 @@ export default function Index() {
     setAiCoaching(null);
     try {
       toast({
-        title: 'Processing Videos',
-        description: 'Extracting frames from user video...'
+        title: 'Processing Rally Video',
+        description: 'Extracting frames from your rally video...'
       });
 
-      // Extract user video frames at 2 FPS for faster processing
       const userFrames = await extractFramesFromVideo(videoFile, 2);
       if (userFrames.length === 0) {
         throw new Error('No frames could be extracted from the video');
       }
-      console.log(`User video: extracted ${userFrames.length} frames`);
+      console.log(`Rally video: extracted ${userFrames.length} frames`);
 
-      // Extract reference video frames if available (also at 2 FPS)
-      let referenceFrames: HTMLImageElement[] | null = null;
-      if (referenceVideo) {
-        try {
-          toast({
-            title: 'Processing Reference Video',
-            description: 'Extracting and classifying reference video frames by movement...'
-          });
-          referenceFrames = await extractFramesFromVideo(referenceVideo, 2);
-          console.log(`Reference video: extracted ${referenceFrames.length} frames for classification`);
-        } catch (refError) {
-          console.warn('Could not extract reference video frames, using static reference instead:', refError);
-          toast({
-            title: 'Reference Video Skipped',
-            description: 'Could not process reference video, using reference image angles instead.'
-          });
-          // Continue without reference frames - will use referenceAngles instead
-        }
-      }
-      toast({
-        title: 'Classifying Movements',
-        description: `Classifying ${userFrames.length} user frames by movement type (ready position, groundstroke, serve)...`
-      });
-
-      // Step 1: Classify user frames by movement type
-      const classified = await classifyFramesByMovement(userFrames, (current, total) => {
-        setVideoProgress({
-          current,
-          total: total * (referenceFrames ? 3 : 2)
-        });
-      });
-      setClassifiedFrames(classified);
-      console.log('User frames classified:', {
-        'ready-position': classified['ready-position'].length,
-        'groundstroke': classified['groundstroke'].length,
-        'serve': classified['serve'].length,
-        'unknown': classified['unknown'].length
-      });
       toast({
         title: 'Analyzing Frames',
-        description: referenceFrames ? `Comparing ${userFrames.length} user frames against ${referenceFrames.length} reference frames...` : `Analyzing ${userFrames.length} frames against reference pose...`
+        description: `Analyzing ${userFrames.length} frames against reference pose...`
       });
 
-      // Step 2: Analyze all frames with reference comparison
-      // If referenceFrames is provided, analyzeVideoFrames will classify them too
-      // and create movement-specific reference angles
       const results = await analyzeVideoFrames(userFrames, referenceAngles, (current, total) => {
-        const baseProgress = userFrames.length;
-        setVideoProgress({
-          current: baseProgress + current,
-          total: userFrames.length * (referenceFrames ? 3 : 2)
-        });
-      }, referenceFrames);
+        setVideoProgress({ current, total });
+      });
       setVideoAnalysisResult(results);
 
-      // Use the first frame's feedback for traditional display
       if (results.frames.length > 0) {
         setFeedback(results.frames[0].feedback);
         setUserAngles(results.frames[0].angles);
       }
 
-      // Get AI coaching with video analysis data
-      await getAICoaching(results.frames[0]?.feedback || [], results.frames[0]?.angles || referenceAngles, referenceAngles, results);
+      await getAICoaching(
+        results.frames[0]?.feedback || [],
+        results.frames[0]?.angles || referenceAngles,
+        referenceAngles,
+        results
+      );
       toast({
-        title: 'Video Analysis Complete',
-        description: `Analyzed ${results.totalFrames} frames by movement type.`
+        title: 'Rally Analysis Complete',
+        description: `Analyzed ${results.totalFrames} frames from your rally.`
       });
     } catch (error) {
       console.error('Error processing video:', error);
@@ -429,10 +386,7 @@ export default function Index() {
       });
     } finally {
       setIsProcessingVideo(false);
-      setVideoProgress({
-        current: 0,
-        total: 0
-      });
+      setVideoProgress({ current: 0, total: 0 });
     }
   };
   return <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
