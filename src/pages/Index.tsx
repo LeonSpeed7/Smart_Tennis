@@ -35,7 +35,7 @@ export default function Index() {
     total: number;
   } | null>(null);
   const [videoAnalysisResult, setVideoAnalysisResult] = useState<VideoAnalysisResult | null>(null);
-  const [classifiedFrames, setClassifiedFrames] = useState<ClassifiedFramesByMovement | null>(null);
+  const [classifiedFrames, setClassifiedFrames] = useState<any>(null);
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [videoProgress, setVideoProgress] = useState({
     current: 0,
