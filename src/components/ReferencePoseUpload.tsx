@@ -7,12 +7,152 @@ import { CheckCircle, Image, Video } from 'lucide-react';
 import { JointAngles } from '@/lib/poseAnalysis';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { estimatePoseFromImage } from '@/lib/poseEstimation';
 import defaultReferenceImage from '@/assets/default-reference-pose.png';
 const defaultReferenceVideo = '/default-reference-rally.mp4';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 
 type DefaultReferenceType = 'image' | 'video' | 'none';
+
+type VideoCropRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const VIDEO_FRAME_SEARCH_REGIONS: VideoCropRegion[] = [
+  { x: 0, y: 0, width: 1, height: 1 },
+  { x: 0, y: 0, width: 0.62, height: 1 },
+  { x: 0.38, y: 0, width: 0.62, height: 1 },
+  { x: 0.18, y: 0, width: 0.64, height: 1 },
+];
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not load frame image'));
+    image.src = src;
+  });
+}
+
+function getVideoSearchTimestamps(duration: number): number[] {
+  if (!Number.isFinite(duration) || duration <= 0.6) {
+    return [0];
+  }
+
+  const start = Math.min(0.35, duration * 0.1);
+  const end = Math.max(start, duration - 0.35);
+  const sampleCount = Math.min(8, Math.max(4, Math.floor(duration)));
+
+  return Array.from({ length: sampleCount }, (_, index) => {
+    if (sampleCount === 1) {
+      return duration / 2;
+    }
+
+    return start + (index * (end - start)) / (sampleCount - 1);
+  }).map((timestamp) => Number(timestamp.toFixed(2)));
+}
+
+function seekVideoToTimestamp(video: HTMLVideoElement, timestamp: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const boundedTimestamp = Math.min(Math.max(timestamp, 0), Math.max(video.duration - 0.05, 0));
+
+    const handleSeeked = () => {
+      cleanup();
+      resolve();
+    };
+
+    const handleError = () => {
+      cleanup();
+      reject(new Error('Failed to seek video frame'));
+    };
+
+    const cleanup = () => {
+      video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('error', handleError);
+    };
+
+    video.addEventListener('seeked', handleSeeked, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    video.currentTime = boundedTimestamp;
+  });
+}
+
+async function findReferenceFrameFromVideo(videoFile: File): Promise<string> {
+  const video = document.createElement('video');
+  const sourceCanvas = document.createElement('canvas');
+  const cropCanvas = document.createElement('canvas');
+  const sourceContext = sourceCanvas.getContext('2d');
+  const cropContext = cropCanvas.getContext('2d');
+
+  if (!sourceContext || !cropContext) {
+    throw new Error('Could not process video frames');
+  }
+
+  const objectUrl = URL.createObjectURL(videoFile);
+  video.src = objectUrl;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const handleLoadedMetadata = () => {
+        cleanup();
+        resolve();
+      };
+
+      const handleError = () => {
+        cleanup();
+        reject(new Error('Error loading video'));
+      };
+
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
+      };
+
+      video.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
+      video.addEventListener('error', handleError, { once: true });
+    });
+
+    sourceCanvas.width = video.videoWidth;
+    sourceCanvas.height = video.videoHeight;
+
+    const timestamps = getVideoSearchTimestamps(video.duration);
+
+    for (const timestamp of timestamps) {
+      await seekVideoToTimestamp(video, timestamp);
+      sourceContext.drawImage(video, 0, 0, sourceCanvas.width, sourceCanvas.height);
+
+      for (const region of VIDEO_FRAME_SEARCH_REGIONS) {
+        const cropX = Math.round(sourceCanvas.width * region.x);
+        const cropY = Math.round(sourceCanvas.height * region.y);
+        const cropWidth = Math.max(1, Math.round(sourceCanvas.width * region.width));
+        const cropHeight = Math.max(1, Math.round(sourceCanvas.height * region.height));
+
+        cropCanvas.width = cropWidth;
+        cropCanvas.height = cropHeight;
+        cropContext.drawImage(sourceCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+        const imageData = cropCanvas.toDataURL('image/jpeg', 0.92);
+        const frameImage = await loadImageElement(imageData);
+        const keypoints = await estimatePoseFromImage(frameImage);
+
+        if (keypoints) {
+          return imageData;
+        }
+      }
+    }
+
+    throw new Error('Could not detect a player pose in the reference video');
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 interface ReferencePoseUploadProps {
   onReferenceSet: (imageData: string, angles: JointAngles, videoFile?: File) => void;
@@ -30,6 +170,14 @@ export function ReferencePoseUpload({
   const [defaultReferenceType, setDefaultReferenceType] = useState<DefaultReferenceType>('image');
   const [hasLoadedDefault, setHasLoadedDefault] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    return () => {
+      if (selectedVideo?.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedVideo);
+      }
+    };
+  }, [selectedVideo]);
 
   // Load default reference only on initial mount
   useEffect(() => {
@@ -76,55 +224,29 @@ export function ReferencePoseUpload({
 
   const handleVideoSelect = async (videoFile: File) => {
     setIsProcessingVideo(true);
-    
-    // Set video preview
-    setSelectedVideo(URL.createObjectURL(videoFile));
-    
-    try {
-      // Extract first frame from video
-      const video = document.createElement('video');
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) {
-        throw new Error('Could not get canvas context');
+
+    const previewUrl = URL.createObjectURL(videoFile);
+    setSelectedVideo((currentUrl) => {
+      if (currentUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(currentUrl);
       }
 
-      const objectUrl = URL.createObjectURL(videoFile);
-      video.src = objectUrl;
-      video.muted = true;
-      
-      await new Promise((resolve, reject) => {
-        video.addEventListener('loadedmetadata', () => {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          video.currentTime = 0.5; // Get frame at 0.5 seconds
-        });
-        
-        video.addEventListener('seeked', () => {
-          ctx.drawImage(video, 0, 0);
-          URL.revokeObjectURL(objectUrl);
-          
-          const imageData = canvas.toDataURL('image/jpeg', 0.9);
-          onReferenceSet(imageData, {} as JointAngles, videoFile);
-          resolve(null);
-        });
-        
-        video.addEventListener('error', () => {
-          URL.revokeObjectURL(objectUrl);
-          reject(new Error('Error loading video'));
-        });
-      });
+      return previewUrl;
+    });
+    
+    try {
+      const imageData = await findReferenceFrameFromVideo(videoFile);
+      onReferenceSet(imageData, {} as JointAngles, videoFile);
 
       toast({
         title: 'Video Processed',
-        description: 'Reference video loaded for frame-by-frame comparison',
+        description: 'Reference rally loaded with a detected player frame for comparison.',
       });
     } catch (error) {
       console.error('Error processing video:', error);
       toast({
         title: 'Video Processing Error',
-        description: 'Failed to extract frame from video. Please try again.',
+        description: 'Could not detect a player in this rally video. Try a clearer side-view clip.',
         variant: 'destructive',
       });
     } finally {
