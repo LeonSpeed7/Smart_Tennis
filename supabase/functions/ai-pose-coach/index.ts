@@ -1,207 +1,310 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const DAILY_QUOTA = 10;
+const JOINTS = ["knee", "hip", "elbow", "ankle", "shoulder", "wrist"] as const;
+
+type AngleMap = Record<string, unknown>;
+type FeedbackItem = {
+  joint?: string;
+  message?: string;
+  difference?: number;
+  angle?: number;
+  status?: string;
+};
+
+type RatingItem = {
+  rating?: number;
+  status?: string;
+  averageAngle?: number;
+  averageDifference?: number;
+  goodFrames?: number;
+  totalFrames?: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const asNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const formatSigned = (value: number | null) =>
+  value === null ? "n/a" : `${value > 0 ? "+" : ""}${value.toFixed(1)}°`;
+
+const formatNumber = (value: number | null) =>
+  value === null ? "n/a" : `${value.toFixed(1)}°`;
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { feedback, userAngles, referenceAngles, videoAnalysis } = await req.json();
-    console.log('Received coaching request:', { feedback, userAngles, referenceAngles, hasVideoAnalysis: !!videoAnalysis });
-
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
       return new Response(
-        JSON.stringify({ error: 'Authentication required. Please sign in to use AI coaching.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: "Authentication required. Please sign in to use AI coaching." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: authHeader } }
+    const token = authHeader.replace("Bearer ", "").trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+
+    if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey || !lovableApiKey) {
+      throw new Error("Required backend secrets are not configured");
+    }
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey);
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token);
+    const userId = claimsData?.claims?.sub;
+
+    if (claimsError || !userId) {
+      console.error("JWT validation failed:", claimsError);
+      return new Response(
+        JSON.stringify({ error: "Authentication failed. Please sign in again." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const payload = await req.json();
+    if (!isRecord(payload) || !isRecord(payload.userAngles) || !isRecord(payload.referenceAngles)) {
+      return new Response(
+        JSON.stringify({ error: "Invalid request payload." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const feedback = Array.isArray(payload.feedback) ? (payload.feedback as FeedbackItem[]) : [];
+    const userAngles = payload.userAngles as AngleMap;
+    const referenceAngles = payload.referenceAngles as AngleMap;
+    const videoAnalysis = isRecord(payload.videoAnalysis) ? payload.videoAnalysis : null;
+
+    console.log("Received coaching request:", {
+      userId,
+      feedbackCount: feedback.length,
+      hasVideoAnalysis: Boolean(videoAnalysis),
     });
 
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    const today = new Date().toISOString().split("T")[0];
+    const { data: usageData, error: usageError } = await adminClient
+      .from("ai_usage_tracking")
+      .select("request_count")
+      .eq("user_id", userId)
+      .eq("usage_date", today)
+      .maybeSingle();
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      console.error('Auth error:', userError);
-      return new Response(
-        JSON.stringify({ error: 'Authentication failed. Please sign in again.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-
-    const { data: usageData, error: usageError } = await supabase
-      .from('ai_usage_tracking')
-      .select('request_count')
-      .eq('user_id', user.id)
-      .eq('usage_date', today)
-      .single();
-
-    if (usageError && usageError.code !== 'PGRST116') {
-      console.error('Usage check error:', usageError);
+    if (usageError) {
+      console.error("Usage check error:", usageError);
     }
 
     const currentCount = usageData?.request_count || 0;
-
     if (currentCount >= DAILY_QUOTA) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: `Daily AI coaching limit reached (${DAILY_QUOTA} requests per day). Please try again tomorrow.`,
           quotaExceeded: true,
           currentUsage: currentCount,
-          dailyQuota: DAILY_QUOTA
+          dailyQuota: DAILY_QUOTA,
         }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
-    }
+    const observedAngleLines = JOINTS
+      .filter((joint) => userAngles[joint] !== undefined || referenceAngles[joint] !== undefined)
+      .map((joint) => {
+        const userAngle = asNumber(userAngles[joint]);
+        const referenceAngle = asNumber(referenceAngles[joint]);
+        const difference = userAngle !== null && referenceAngle !== null ? userAngle - referenceAngle : null;
 
-    let prompt = '';
+        return `- ${joint.toUpperCase()}: player ${formatNumber(userAngle)}, target ${formatNumber(referenceAngle)}, difference ${formatSigned(difference)}`;
+      })
+      .join("\n");
+
+    const observedFeedbackLines = feedback.length
+      ? feedback
+          .map((item) => {
+            const difference = asNumber(item.difference);
+            return `- ${item.joint ?? "joint"}: ${item.message ?? "No message"}${difference !== null ? ` (difference ${formatSigned(difference)})` : ""}`;
+          })
+          .join("\n")
+      : "- No direct rule-based issues were provided.";
+
+    let prompt = "";
 
     if (videoAnalysis) {
-      prompt = `You are an expert tennis coach analyzing a player's rally video. The video has been broken into ${videoAnalysis.totalFrames} frames and each frame's joint angles were analyzed.
+      const ratings = Object.entries(videoAnalysis.averageRatings ?? {})
+        .filter(([, value]) => isRecord(value) && typeof value.rating === "number")
+        .map(([joint, value]) => ({ joint, ...(value as RatingItem) }))
+        .sort((a, b) => (a.rating ?? 0) - (b.rating ?? 0));
 
-Overall Score: ${videoAnalysis.overallScore.toFixed(1)}/100
+      const weakestJoints = ratings.slice(0, 3);
+      const strongestJoint = ratings.at(-1);
 
-Per-Joint Ratings:
-${Object.entries(videoAnalysis.averageRatings).map(([joint, rating]: [string, any]) => 
-  `- ${joint.toUpperCase()}: ${rating.rating}/100 (${rating.status})
-    • Avg Angle: ${rating.averageAngle.toFixed(1)}°
-    • Avg Difference from reference: ±${rating.averageDifference.toFixed(1)}°
-    • Consistency: ${rating.goodFrames}/${rating.totalFrames} frames within range (${((rating.goodFrames/rating.totalFrames)*100).toFixed(0)}%)`
-).join('\n')}
+      const ratingLines = ratings.length
+        ? ratings
+            .map(
+              (rating) =>
+                `- ${rating.joint.toUpperCase()}: ${rating.rating}/100 (${rating.status ?? "unknown"}), avg angle ${formatNumber(asNumber(rating.averageAngle))}, avg difference ${formatNumber(asNumber(rating.averageDifference))}, consistency ${rating.goodFrames ?? 0}/${rating.totalFrames ?? 0}`
+            )
+            .join("\n")
+        : "- No per-joint ratings were available.";
 
-Please provide a holistic analysis of this rally:
-1. Overall assessment of the player's form throughout the rally (2-3 sentences)
-2. The strongest aspect of their technique (which joint/body part is most consistent)
-3. The weakest aspect that needs the most work, with specific drills to improve
-4. 2-3 actionable corrections ranked by priority
-5. A brief progressive training recommendation
+      prompt = `You are an expert tennis coach reviewing a player's rally video.
 
-Keep the response concise, encouraging, and focused on actionable improvements. Use a friendly coaching tone.`;
+Use ONLY the measured observations below. Do not give generic tennis advice. Every coaching point must reference something that was actually observed in the player's data.
+
+RALLY SUMMARY
+- Frames analyzed: ${videoAnalysis.totalFrames ?? 0}
+- Overall score: ${typeof videoAnalysis.overallScore === "number" ? videoAnalysis.overallScore.toFixed(1) : "n/a"}/100
+
+OBSERVED JOINT RATINGS
+${ratingLines}
+
+WEAKEST AREAS DETECTED
+${weakestJoints.length ? weakestJoints.map((joint) => `- ${joint.joint}: ${joint.rating}/100`).join("\n") : "- No weak areas were available."}
+
+STRONGEST AREA DETECTED
+${strongestJoint ? `- ${strongestJoint.joint}: ${strongestJoint.rating}/100` : "- No strongest area was available."}
+
+REFERENCE COMPARISON SNAPSHOT
+${observedAngleLines}
+
+Respond in this exact format:
+Overall assessment:
+- 2-3 sentences summarizing what you noticed across the rally.
+
+What I noticed:
+- List 3 specific observations from the data.
+
+Top improvements:
+1. Name the body part/joint, what was wrong, why it matters, and one drill/cue.
+2. Name the body part/joint, what was wrong, why it matters, and one drill/cue.
+3. Name the body part/joint, what was wrong, why it matters, and one drill/cue.
+
+What to keep doing:
+- Mention the player's strongest area and why it is a positive.
+
+Be concise, specific, and encouraging.`;
     } else {
-      prompt = `You are an expert tennis coach analyzing a player's pose.
+      prompt = `You are an expert tennis coach reviewing a player's pose.
 
-Reference (ideal) angles:
-- Knee: ${referenceAngles.knee}°
-- Hip: ${referenceAngles.hip}°
-- Elbow: ${referenceAngles.elbow}°
-- Ankle: ${referenceAngles.ankle}°
+Use ONLY the measured observations below. Do not give generic advice. Every coaching point must reference something that was actually observed in the player's pose data.
 
-User's current angles:
-- Knee: ${userAngles.knee}° (difference: ${(userAngles.knee - referenceAngles.knee).toFixed(1)}°)
-- Hip: ${userAngles.hip}° (difference: ${(userAngles.hip - referenceAngles.hip).toFixed(1)}°)
-- Elbow: ${userAngles.elbow}° (difference: ${(userAngles.elbow - referenceAngles.elbow).toFixed(1)}°)
-- Ankle: ${userAngles.ankle}° (difference: ${(userAngles.ankle - referenceAngles.ankle).toFixed(1)}°)
+REFERENCE COMPARISON
+${observedAngleLines}
 
-Current feedback:
-${feedback.map((f: any) => `- ${f.joint}: ${f.message}`).join('\n')}
+RULE-BASED OBSERVATIONS
+${observedFeedbackLines}
 
-Please provide:
-1. A brief overall assessment (2-3 sentences)
-2. Top 2-3 specific corrections needed with actionable tips
-3. One positive reinforcement about what they're doing well
+Respond in this exact format:
+Overall assessment:
+- 2-3 sentences summarizing what you noticed.
 
-Keep the response concise, encouraging, and focused on actionable improvements. Use a friendly, coaching tone.`;
+What I noticed:
+- List 2-3 specific observations from the pose data.
+
+Top improvements:
+1. Name the body part/joint, what was wrong, why it matters, and one correction cue.
+2. Name the body part/joint, what was wrong, why it matters, and one correction cue.
+3. If needed, add one more improvement.
+
+What to keep doing:
+- Mention one thing the player is doing well.
+
+Be concise, specific, and encouraging.`;
     }
 
-    console.log('Calling Lovable AI Gateway...');
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
+    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+        model: "google/gemini-3-flash-preview",
         messages: [
           {
-            role: 'system',
-            content: 'You are an expert tennis coach providing personalized feedback on player technique during rallies and poses. Be encouraging but specific in your corrections.'
+            role: "system",
+            content:
+              "You are a tennis coach who gives precise, evidence-based feedback from pose and rally measurements. Never be generic. Always mention the specific joints and issues you observed.",
           },
           {
-            role: 'user',
-            content: prompt
-          }
+            role: "user",
+            content: prompt,
+          },
         ],
-        temperature: 0.7,
+        temperature: 0.4,
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      
-      if (response.status === 429) {
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      console.error("AI gateway error:", aiResponse.status, errorText);
+
+      if (aiResponse.status === 429) {
         return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      
-      if (response.status === 402) {
+
+      if (aiResponse.status === 402) {
         return new Response(
-          JSON.stringify({ error: 'AI credits exhausted. Please add credits to continue.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: "AI credits exhausted. Please add credits to continue." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      
-      throw new Error(`AI Gateway error: ${response.status}`);
+
+      throw new Error(`AI gateway error: ${aiResponse.status}`);
     }
 
-    const data = await response.json();
-    const coaching = data.choices[0].message.content;
-    
-    console.log('Generated coaching successfully');
+    const data = await aiResponse.json();
+    const coaching = data?.choices?.[0]?.message?.content;
 
-    const { error: updateError } = await supabaseAdmin
-      .from('ai_usage_tracking')
-      .upsert({
-        user_id: user.id,
+    if (!coaching || typeof coaching !== "string") {
+      throw new Error("AI coaching response was empty");
+    }
+
+    const { error: updateError } = await adminClient.from("ai_usage_tracking").upsert(
+      {
+        user_id: userId,
         usage_date: today,
         request_count: currentCount + 1,
-      }, {
-        onConflict: 'user_id,usage_date'
-      });
+      },
+      {
+        onConflict: "user_id,usage_date",
+      }
+    );
 
     if (updateError) {
-      console.error('Failed to update usage tracking:', updateError);
+      console.error("Failed to update usage tracking:", updateError);
     }
 
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         coaching,
         remainingQuota: DAILY_QUOTA - (currentCount + 1),
-        dailyQuota: DAILY_QUOTA
+        dailyQuota: DAILY_QUOTA,
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-
   } catch (error) {
-    console.error('Error in ai-pose-coach function:', error);
+    console.error("Error in ai-pose-coach function:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error occurred" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
