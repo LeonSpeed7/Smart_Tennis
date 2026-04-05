@@ -20,19 +20,15 @@ export function VideoUpload({ onVideoSelect, isProcessing }: VideoUploadProps) {
     }
   };
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Video className="h-5 w-5" />
-          Upload Video for Analysis
+          Upload Rally Video
         </CardTitle>
         <CardDescription>
-          Upload a video of your tennis ready position for frame-by-frame analysis
+          Upload a video of a tennis rally for frame-by-frame analysis
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -46,16 +42,12 @@ export function VideoUpload({ onVideoSelect, isProcessing }: VideoUploadProps) {
         
         {selectedVideo && (
           <div className="rounded-lg overflow-hidden bg-muted">
-            <video
-              src={selectedVideo}
-              controls
-              className="w-full h-auto"
-            />
+            <video src={selectedVideo} controls className="w-full h-auto" />
           </div>
         )}
 
         <Button
-          onClick={handleUploadClick}
+          onClick={() => fileInputRef.current?.click()}
           disabled={isProcessing}
           className="w-full"
           variant="outline"
@@ -63,12 +55,12 @@ export function VideoUpload({ onVideoSelect, isProcessing }: VideoUploadProps) {
           {isProcessing ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing Video...
+              Processing Rally Video...
             </>
           ) : (
             <>
               <Upload className="mr-2 h-4 w-4" />
-              {selectedVideo ? 'Select Different Video' : 'Select Video'}
+              {selectedVideo ? 'Select Different Video' : 'Select Rally Video'}
             </>
           )}
         </Button>

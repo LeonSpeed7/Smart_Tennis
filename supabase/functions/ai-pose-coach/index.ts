@@ -4,10 +4,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-const DAILY_QUOTA = 10; // Maximum AI coaching requests per user per day
+const DAILY_QUOTA = 10;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -18,7 +18,6 @@ serve(async (req) => {
     const { feedback, userAngles, referenceAngles, videoAnalysis } = await req.json();
     console.log('Received coaching request:', { feedback, userAngles, referenceAngles, hasVideoAnalysis: !!videoAnalysis });
 
-    // Get authorization token to identify the user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -27,18 +26,15 @@ serve(async (req) => {
       );
     }
 
-    // Initialize Supabase client with user's auth for reading
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
     });
 
-    // Service role client for writing usage tracking (no client INSERT/UPDATE policy)
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       console.error('Auth error:', userError);
@@ -48,9 +44,8 @@ serve(async (req) => {
       );
     }
 
-    const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0];
 
-    // Check current usage for today
     const { data: usageData, error: usageError } = await supabase
       .from('ai_usage_tracking')
       .select('request_count')
@@ -58,15 +53,13 @@ serve(async (req) => {
       .eq('usage_date', today)
       .single();
 
-    if (usageError && usageError.code !== 'PGRST116') { // PGRST116 = no rows found
+    if (usageError && usageError.code !== 'PGRST116') {
       console.error('Usage check error:', usageError);
     }
 
     const currentCount = usageData?.request_count || 0;
 
-    // Check if quota exceeded
     if (currentCount >= DAILY_QUOTA) {
-      console.log(`Quota exceeded for user ${user.id}: ${currentCount}/${DAILY_QUOTA}`);
       return new Response(
         JSON.stringify({ 
           error: `Daily AI coaching limit reached (${DAILY_QUOTA} requests per day). Please try again tomorrow.`,
@@ -83,8 +76,31 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
-    // Create detailed prompt for AI coach
-    let prompt = `You are an expert tennis coach analyzing a player's ready position. 
+    let prompt = '';
+
+    if (videoAnalysis) {
+      prompt = `You are an expert tennis coach analyzing a player's rally video. The video has been broken into ${videoAnalysis.totalFrames} frames and each frame's joint angles were analyzed.
+
+Overall Score: ${videoAnalysis.overallScore.toFixed(1)}/100
+
+Per-Joint Ratings:
+${Object.entries(videoAnalysis.averageRatings).map(([joint, rating]: [string, any]) => 
+  `- ${joint.toUpperCase()}: ${rating.rating}/100 (${rating.status})
+    • Avg Angle: ${rating.averageAngle.toFixed(1)}°
+    • Avg Difference from reference: ±${rating.averageDifference.toFixed(1)}°
+    • Consistency: ${rating.goodFrames}/${rating.totalFrames} frames within range (${((rating.goodFrames/rating.totalFrames)*100).toFixed(0)}%)`
+).join('\n')}
+
+Please provide a holistic analysis of this rally:
+1. Overall assessment of the player's form throughout the rally (2-3 sentences)
+2. The strongest aspect of their technique (which joint/body part is most consistent)
+3. The weakest aspect that needs the most work, with specific drills to improve
+4. 2-3 actionable corrections ranked by priority
+5. A brief progressive training recommendation
+
+Keep the response concise, encouraging, and focused on actionable improvements. Use a friendly coaching tone.`;
+    } else {
+      prompt = `You are an expert tennis coach analyzing a player's pose.
 
 Reference (ideal) angles:
 - Knee: ${referenceAngles.knee}°
@@ -99,40 +115,15 @@ User's current angles:
 - Ankle: ${userAngles.ankle}° (difference: ${(userAngles.ankle - referenceAngles.ankle).toFixed(1)}°)
 
 Current feedback:
-${feedback.map((f: any) => `- ${f.joint}: ${f.message}`).join('\n')}`;
-
-    if (videoAnalysis) {
-      prompt += `
-
-VIDEO ANALYSIS (${videoAnalysis.totalFrames} frames analyzed):
-Overall Score: ${videoAnalysis.overallScore.toFixed(1)}/100
-
-Per-Joint Ratings and Performance:
-${Object.entries(videoAnalysis.averageRatings).map(([joint, rating]: [string, any]) => 
-  `- ${joint.toUpperCase()}: ${rating.rating}/100 (${rating.status})
-    • Avg Angle: ${rating.averageAngle.toFixed(1)}°
-    • Avg Difference: ±${rating.averageDifference.toFixed(1)}°
-    • Consistency: ${rating.goodFrames}/${rating.totalFrames} frames (${((rating.goodFrames/rating.totalFrames)*100).toFixed(0)}%)`
-).join('\n')}
-
-Based on this video analysis, please provide:
-1. Overall assessment of form consistency across the video (2-3 sentences)
-2. Identify which joint has the WORST rating and needs the most improvement with specific drills
-3. Identify which joint has the BEST rating to reinforce good technique
-4. Specific actionable corrections for the 2-3 joints with lowest ratings
-5. Progressive training plan focusing on the weakest aspects`;
-    } else {
-      prompt += `
+${feedback.map((f: any) => `- ${f.joint}: ${f.message}`).join('\n')}
 
 Please provide:
 1. A brief overall assessment (2-3 sentences)
 2. Top 2-3 specific corrections needed with actionable tips
-3. One positive reinforcement about what they're doing well`;
-    }
-
-    prompt += `
+3. One positive reinforcement about what they're doing well
 
 Keep the response concise, encouraging, and focused on actionable improvements. Use a friendly, coaching tone.`;
+    }
 
     console.log('Calling Lovable AI Gateway...');
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -142,11 +133,11 @@ Keep the response concise, encouraging, and focused on actionable improvements. 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-3-flash-preview',
         messages: [
           {
             role: 'system',
-            content: 'You are an expert tennis coach providing personalized feedback on player positioning. Be encouraging but specific in your corrections.'
+            content: 'You are an expert tennis coach providing personalized feedback on player technique during rallies and poses. Be encouraging but specific in your corrections.'
           },
           {
             role: 'user',
@@ -181,9 +172,8 @@ Keep the response concise, encouraging, and focused on actionable improvements. 
     const data = await response.json();
     const coaching = data.choices[0].message.content;
     
-    console.log('Generated coaching:', coaching);
+    console.log('Generated coaching successfully');
 
-    // Increment usage count (upsert: insert if not exists, update if exists)
     const { error: updateError } = await supabaseAdmin
       .from('ai_usage_tracking')
       .upsert({
@@ -196,7 +186,6 @@ Keep the response concise, encouraging, and focused on actionable improvements. 
 
     if (updateError) {
       console.error('Failed to update usage tracking:', updateError);
-      // Don't fail the request if tracking fails, just log it
     }
 
     return new Response(
