@@ -1,24 +1,14 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { VideoAnalysisResult, MovementStats, ClassifiedFramesByMovement } from '@/lib/videoAnalysis';
-import { getMovementLabel, TennisMovement } from '@/lib/tennisMovementClassifier';
-import { TrendingUp, TrendingDown, Minus, ExternalLink, Eye } from 'lucide-react';
-import { ReferenceFramesDialog } from './ReferenceFramesDialog';
+import { VideoAnalysisResult, JointRating } from '@/lib/videoAnalysis';
+import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 interface VideoAnalysisResultsProps {
   results: VideoAnalysisResult;
-  classifiedFrames?: ClassifiedFramesByMovement | null;
 }
 
-export function VideoAnalysisResults({ results, classifiedFrames }: VideoAnalysisResultsProps) {
-  const navigate = useNavigate();
-  const [showReferenceDialog, setShowReferenceDialog] = useState(false);
-
+export function VideoAnalysisResults({ results }: VideoAnalysisResultsProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'excellent':
@@ -34,54 +24,23 @@ export function VideoAnalysisResults({ results, classifiedFrames }: VideoAnalysi
     }
   };
 
-  const handleViewFrames = (movement: TennisMovement) => {
-    if (!classifiedFrames) return;
-    
-    const frames = classifiedFrames[movement].map(f => ({
-      frameIndex: f.frameIndex,
-      imageSrc: f.image.src,
-      angles: f.angles,
-      confidence: f.confidence,
-    }));
+  const joints = Object.entries(results.averageRatings).filter(
+    ([, rating]) => (rating as JointRating).totalFrames > 0
+  ) as [string, JointRating][];
 
-    navigate('/movement-frames', {
-      state: { movement, frames },
-    });
-  };
-
-  const renderMovementStats = (stats: MovementStats, movement: string) => {
-    if (stats.frameCount === 0) {
-      return (
-        <div className="text-center py-8 text-muted-foreground">
-          No {getMovementLabel(movement as any)} frames detected
+  return (
+    <Card className="border-primary/50">
+      <CardHeader>
+        <CardTitle>Rally Analysis Results</CardTitle>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Overall Score:</span>
+          <Badge variant="outline" className="text-lg">
+            {Math.round(results.overallScore)}/100
+          </Badge>
+          <span className="text-xs">({results.totalFrames} frames analyzed)</span>
         </div>
-      );
-    }
-
-    const joints = Object.entries(stats.averageRatings);
-
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Movement Score:</span>
-            <Badge variant="outline" className="text-lg">
-              {Math.round(stats.overallScore)}/100
-            </Badge>
-            <span className="text-xs">({stats.frameCount} frames)</span>
-          </div>
-          {classifiedFrames && stats.frameCount > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleViewFrames(movement as TennisMovement)}
-            >
-              <ExternalLink className="mr-2 h-4 w-4" />
-              View Frames
-            </Button>
-          )}
-        </div>
-
+      </CardHeader>
+      <CardContent className="space-y-6">
         {joints.map(([jointName, rating]) => (
           <div key={jointName} className="space-y-2">
             <div className="flex items-center justify-between">
@@ -103,10 +62,7 @@ export function VideoAnalysisResults({ results, classifiedFrames }: VideoAnalysi
               </div>
             </div>
             
-            <Progress 
-              value={rating.rating} 
-              className="h-2"
-            />
+            <Progress value={rating.rating} className="h-2" />
             
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
@@ -115,101 +71,19 @@ export function VideoAnalysisResults({ results, classifiedFrames }: VideoAnalysi
               </div>
               
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <div>
-                  Avg Difference: ±{rating.averageDifference.toFixed(1)}°
-                </div>
-                <div>
-                  Frames Within Range: {rating.goodFrames}/{rating.totalFrames}
-                </div>
+                <div>Avg Difference: ±{rating.averageDifference.toFixed(1)}°</div>
+                <div>Frames Within Range: {rating.goodFrames}/{rating.totalFrames}</div>
               </div>
               
               <div className="text-xs text-muted-foreground">
-                <span className="font-medium">Accuracy Rate:</span> {((rating.goodFrames / rating.totalFrames) * 100).toFixed(0)}% 
-                <span className="text-muted-foreground/70"> (frames within ±10° of reference)</span>
+                <span className="font-medium">Accuracy Rate:</span>{' '}
+                {((rating.goodFrames / rating.totalFrames) * 100).toFixed(0)}%
+                <span className="text-muted-foreground/70"> (frames within ±20° of reference)</span>
               </div>
             </div>
           </div>
         ))}
-      </div>
-    );
-  };
-
-  const hasReferenceFrames = results.referenceClassifiedFrames && 
-    Object.values(results.referenceClassifiedFrames).some(arr => arr.length > 0);
-
-  return (
-    <>
-      <Card className="border-primary/50">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Video Analysis Results</CardTitle>
-            {hasReferenceFrames && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowReferenceDialog(true)}
-              >
-                <Eye className="mr-2 h-4 w-4" />
-                View Reference Frames
-              </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Overall Score:</span>
-            <Badge variant="outline" className="text-lg">
-              {Math.round(results.overallScore)}/100
-            </Badge>
-            <span className="text-xs">({results.totalFrames} frames analyzed)</span>
-          </div>
-        </CardHeader>
-        <CardContent>
-        <Tabs defaultValue="ready-position" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="ready-position" className="text-xs">
-              Ready ({results.movementBreakdown['ready-position'].frameCount})
-            </TabsTrigger>
-            <TabsTrigger value="serve-ready" className="text-xs">
-              Serve Ready ({results.movementBreakdown['serve-ready'].frameCount})
-            </TabsTrigger>
-            <TabsTrigger value="groundstroke" className="text-xs">
-              Groundstroke ({results.movementBreakdown['groundstroke'].frameCount})
-            </TabsTrigger>
-            <TabsTrigger value="serve" className="text-xs">
-              Serve ({results.movementBreakdown['serve'].frameCount})
-            </TabsTrigger>
-            <TabsTrigger value="unknown" className="text-xs">
-              Unknown ({results.movementBreakdown['unknown'].frameCount})
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="ready-position" className="space-y-4 mt-4">
-            {renderMovementStats(results.movementBreakdown['ready-position'], 'ready-position')}
-          </TabsContent>
-
-          <TabsContent value="serve-ready" className="space-y-4 mt-4">
-            {renderMovementStats(results.movementBreakdown['serve-ready'], 'serve-ready')}
-          </TabsContent>
-
-          <TabsContent value="groundstroke" className="space-y-4 mt-4">
-            {renderMovementStats(results.movementBreakdown['groundstroke'], 'groundstroke')}
-          </TabsContent>
-
-          <TabsContent value="serve" className="space-y-4 mt-4">
-            {renderMovementStats(results.movementBreakdown['serve'], 'serve')}
-          </TabsContent>
-
-          <TabsContent value="unknown" className="space-y-4 mt-4">
-            {renderMovementStats(results.movementBreakdown['unknown'], 'unknown')}
-          </TabsContent>
-        </Tabs>
-        </CardContent>
-      </Card>
-
-      <ReferenceFramesDialog
-        open={showReferenceDialog}
-        onOpenChange={setShowReferenceDialog}
-        classifiedFrames={results.referenceClassifiedFrames || null}
-      />
-    </>
+      </CardContent>
+    </Card>
   );
 }
