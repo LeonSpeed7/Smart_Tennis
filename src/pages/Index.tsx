@@ -17,7 +17,7 @@ import { Loader2, Camera, Video } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { estimatePoseFromImage, drawPoseOnCanvas } from '@/lib/poseEstimation';
 import { calculateJointAngles, generateFeedback, DEFAULT_REFERENCE_ANGLES, FeedbackResult, JointAngles } from '@/lib/poseAnalysis';
-import { extractFramesFromVideo, analyzeVideoFrames, VideoAnalysisResult, classifyFramesByMovement, ClassifiedFramesByMovement } from '@/lib/videoAnalysis';
+import { extractFramesFromVideo, analyzeVideoFrames, VideoAnalysisResult } from '@/lib/videoAnalysis';
 export default function Index() {
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceAngles, setReferenceAngles] = useState<JointAngles | null>(null);
