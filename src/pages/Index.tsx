@@ -473,7 +473,7 @@ export default function Index() {
 
           <div>
             {videoAnalysisResult ? <div className="space-y-6">
-                <VideoAnalysisResults results={videoAnalysisResult} classifiedFrames={classifiedFrames} />
+                <VideoAnalysisResults results={videoAnalysisResult} />
                 <AICoachingDisplay coaching={aiCoaching} loading={isLoadingCoaching} quotaInfo={quotaInfo} />
                 {!user && !isLoadingCoaching && !aiCoaching && (
                   <Card className="border-primary/30 bg-primary/5">
