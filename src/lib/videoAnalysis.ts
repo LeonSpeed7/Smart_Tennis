@@ -1,29 +1,12 @@
 import { estimatePoseFromImage } from './poseEstimation';
 import { calculateJointAngles, generateFeedback, JointAngles, FeedbackResult } from './poseAnalysis';
-import { classifyTennisMovement, TennisMovement, MovementClassification } from './tennisMovementClassifier';
 
 export interface FrameAnalysis {
   frameNumber: number;
   timestamp: number;
   angles: JointAngles;
   feedback: FeedbackResult[];
-  movement: MovementClassification;
-}
-
-export interface ClassifiedFrame {
-  frameIndex: number;
-  image: HTMLImageElement;
-  angles: JointAngles;
-  movement: TennisMovement;
-  confidence: number;
-}
-
-export interface ClassifiedFramesByMovement {
-  'ready-position': ClassifiedFrame[];
-  'serve-ready': ClassifiedFrame[];
-  'groundstroke': ClassifiedFrame[];
-  'serve': ClassifiedFrame[];
-  'unknown': ClassifiedFrame[];
+  imageSrc?: string;
 }
 
 export interface VideoAnalysisResult {
@@ -31,22 +14,6 @@ export interface VideoAnalysisResult {
   averageRatings: JointRatings;
   overallScore: number;
   totalFrames: number;
-  movementBreakdown: MovementBreakdown;
-  referenceClassifiedFrames?: ClassifiedFramesByMovement;
-}
-
-export interface MovementBreakdown {
-  'ready-position': MovementStats;
-  'serve-ready': MovementStats;
-  'groundstroke': MovementStats;
-  'serve': MovementStats;
-  'unknown': MovementStats;
-}
-
-export interface MovementStats {
-  frameCount: number;
-  averageRatings: JointRatings;
-  overallScore: number;
 }
 
 export interface JointRatings {
@@ -63,7 +30,7 @@ export interface JointRating {
   averageDifference: number;
   goodFrames: number;
   totalFrames: number;
-  rating: number; // 0-100 score
+  rating: number;
   status: 'excellent' | 'good' | 'needs-improvement' | 'poor';
 }
 
@@ -72,9 +39,7 @@ export async function extractFramesFromVideo(
   framesPerSecond: number = 2
 ): Promise<HTMLImageElement[]> {
   return new Promise((resolve, reject) => {
-    // Validate file first
     if (!videoFile || videoFile.size === 0) {
-      console.error('Invalid video file provided');
       reject(new Error('Invalid video file'));
       return;
     }
@@ -96,7 +61,6 @@ export async function extractFramesFromVideo(
     try {
       objectUrl = URL.createObjectURL(videoFile);
     } catch (error) {
-      console.error('Failed to create object URL:', error);
       reject(new Error('Failed to create video URL'));
       return;
     }
@@ -106,11 +70,10 @@ export async function extractFramesFromVideo(
     video.playsInline = true;
     video.preload = 'metadata';
     
-    // Timeout for video loading
     const loadTimeout = setTimeout(() => {
       URL.revokeObjectURL(objectUrl);
       reject(new Error('Video loading timeout - file may be too large or corrupted'));
-    }, 30000); // 30 second timeout
+    }, 30000);
     
     video.addEventListener('loadedmetadata', () => {
       clearTimeout(loadTimeout);
@@ -159,33 +122,27 @@ export async function extractFramesFromVideo(
       captureFrame();
     });
     
-    video.addEventListener('error', (e) => {
+    video.addEventListener('error', () => {
       clearTimeout(loadTimeout);
       URL.revokeObjectURL(objectUrl);
       const errorMessage = video.error?.message || 'Unknown video error';
-      console.error('Video loading error:', video.error, errorMessage);
       reject(new Error(`Error loading video: ${errorMessage}`));
     });
   });
 }
 
 /**
- * Step 1: Classify all frames by movement type using angle-based rules
- * This groups frames into ready-position, groundstroke, serve, or unknown
+ * Analyze all frames from a rally video against reference angles.
+ * No movement classification — just holistic frame-by-frame analysis.
  */
-export async function classifyFramesByMovement(
+export async function analyzeVideoFrames(
   frames: HTMLImageElement[],
+  referenceAngles: JointAngles,
   onProgress?: (current: number, total: number) => void
-): Promise<ClassifiedFramesByMovement> {
-  const classified: ClassifiedFramesByMovement = {
-    'ready-position': [],
-    'serve-ready': [],
-    'groundstroke': [],
-    'serve': [],
-    'unknown': [],
-  };
+): Promise<VideoAnalysisResult> {
+  const frameAnalyses: FrameAnalysis[] = [];
 
-  console.log(`Classifying ${frames.length} frames by movement type...`);
+  console.log(`Analyzing ${frames.length} rally frames...`);
 
   for (let i = 0; i < frames.length; i++) {
     try {
@@ -193,14 +150,14 @@ export async function classifyFramesByMovement(
       
       if (keypoints) {
         const angles = calculateJointAngles(keypoints, true);
-        const classification = classifyTennisMovement(angles);
-        
-        classified[classification.movement].push({
-          frameIndex: i,
-          image: frames[i],
+        const feedback = generateFeedback(angles, referenceAngles, 10, true);
+
+        frameAnalyses.push({
+          frameNumber: i + 1,
+          timestamp: i / 2, // 2 FPS
           angles,
-          movement: classification.movement,
-          confidence: classification.confidence,
+          feedback,
+          imageSrc: frames[i].src,
         });
       }
       
@@ -208,141 +165,24 @@ export async function classifyFramesByMovement(
         onProgress(i + 1, frames.length);
       }
     } catch (error) {
-      console.error(`Error classifying frame ${i}:`, error);
+      console.error(`Error analyzing frame ${i}:`, error);
     }
   }
 
-  console.log(`Classification complete:
-    Ready Position: ${classified['ready-position'].length} frames
-    Serve Ready: ${classified['serve-ready'].length} frames
-    Groundstroke: ${classified['groundstroke'].length} frames
-    Serve: ${classified['serve'].length} frames
-    Unknown: ${classified['unknown'].length} frames`);
+  console.log(`Analysis complete: ${frameAnalyses.length} frames with poses detected`);
 
-  return classified;
-}
-
-/**
- * Step 2: Analyze grouped frames - compare user's classified frames against reference
- */
-export async function analyzeVideoFrames(
-  frames: HTMLImageElement[],
-  referenceAngles: JointAngles,
-  onProgress?: (current: number, total: number) => void,
-  referenceFrames?: HTMLImageElement[] | null
-): Promise<VideoAnalysisResult> {
-  // Step 1: Classify user frames by movement
-  const userClassified = await classifyFramesByMovement(frames, (current, total) => {
-    if (onProgress) onProgress(current, total * 2); // First half of progress
-  });
-
-  // Step 2: Classify reference frames if provided
-  let refAnglesByMovement: Record<TennisMovement, JointAngles> = {
-    'ready-position': referenceAngles,
-    'serve-ready': referenceAngles,
-    'groundstroke': referenceAngles,
-    'serve': referenceAngles,
-    'unknown': referenceAngles,
-  };
-
-  let refClassified: ClassifiedFramesByMovement | undefined;
-  
-  if (referenceFrames && referenceFrames.length > 0) {
-    console.log(`Classifying ${referenceFrames.length} reference video frames by movement...`);
-    refClassified = await classifyFramesByMovement(referenceFrames);
-    
-    console.log('Reference frames classified:', {
-      'ready-position': refClassified['ready-position'].length,
-      'groundstroke': refClassified['groundstroke'].length,
-      'serve': refClassified['serve'].length,
-      'unknown': refClassified['unknown'].length,
-    });
-    
-    // Calculate average angles per movement type from reference
-    for (const movement of Object.keys(refClassified) as TennisMovement[]) {
-      const movementFrames = refClassified[movement];
-      if (movementFrames.length > 0) {
-        refAnglesByMovement[movement] = averageAngles(movementFrames.map(f => f.angles));
-        console.log(`Reference ${movement}: averaged angles from ${movementFrames.length} frames`, refAnglesByMovement[movement]);
-      }
-    }
-  }
-
-  // Step 3: Generate feedback for each user frame using movement-specific reference
-  const frameAnalyses: FrameAnalysis[] = [];
-  const allClassifiedFrames = [
-    ...userClassified['ready-position'],
-    ...userClassified['groundstroke'],
-    ...userClassified['serve'],
-    ...userClassified['unknown'],
-  ].sort((a, b) => a.frameIndex - b.frameIndex);
-
-  for (let i = 0; i < allClassifiedFrames.length; i++) {
-    const frame = allClassifiedFrames[i];
-    const refAngles = refAnglesByMovement[frame.movement];
-    const feedback = generateFeedback(frame.angles, refAngles, 10, true);
-
-    frameAnalyses.push({
-      frameNumber: frame.frameIndex + 1,
-      timestamp: frame.frameIndex / 2,
-      angles: frame.angles,
-      feedback,
-      movement: {
-        movement: frame.movement,
-        confidence: frame.confidence,
-        matchedRules: [],
-      },
-    });
-
-    if (onProgress) {
-      onProgress(frames.length + i + 1, frames.length * 2);
-    }
-  }
-
-  // Calculate average ratings for each joint
   const averageRatings = calculateAverageRatings(frameAnalyses, referenceAngles);
   
-  // Calculate overall score
-  const overallScore = Object.values(averageRatings).reduce(
-    (sum, rating) => sum + rating.rating,
-    0
-  ) / Object.keys(averageRatings).length;
-  
-  // Calculate movement breakdown
-  const movementBreakdown = calculateMovementBreakdown(frameAnalyses, refAnglesByMovement);
+  const ratingValues = Object.values(averageRatings).filter(r => r.totalFrames > 0);
+  const overallScore = ratingValues.length > 0
+    ? ratingValues.reduce((sum, r) => sum + r.rating, 0) / ratingValues.length
+    : 0;
   
   return {
     frames: frameAnalyses,
     averageRatings,
     overallScore,
     totalFrames: frameAnalyses.length,
-    movementBreakdown,
-    referenceClassifiedFrames: refClassified,
-  };
-}
-
-function averageAngles(anglesArray: JointAngles[]): JointAngles {
-  if (anglesArray.length === 0) {
-    return { knee: 0, hip: 0, elbow: 0, ankle: 0 };
-  }
-
-  const sum = anglesArray.reduce((acc, angles) => ({
-    knee: acc.knee + angles.knee,
-    hip: acc.hip + angles.hip,
-    elbow: acc.elbow + angles.elbow,
-    ankle: acc.ankle + angles.ankle,
-    shoulder: (acc.shoulder || 0) + (angles.shoulder || 0),
-    wrist: (acc.wrist || 0) + (angles.wrist || 0),
-  }), { knee: 0, hip: 0, elbow: 0, ankle: 0, shoulder: 0, wrist: 0 });
-
-  const count = anglesArray.length;
-  return {
-    knee: sum.knee / count,
-    hip: sum.hip / count,
-    elbow: sum.elbow / count,
-    ankle: sum.ankle / count,
-    shoulder: sum.shoulder / count,
-    wrist: sum.wrist / count,
   };
 }
 
@@ -361,7 +201,7 @@ function calculateAverageRatings(
     
     frames.forEach((frame) => {
       const angle = frame.angles[joint];
-      if (angle === undefined) return; // Skip if joint not tracked
+      if (angle === undefined) return;
       
       validFrames++;
       const refAngle = referenceAngles[joint] || 0;
@@ -370,25 +210,29 @@ function calculateAverageRatings(
       totalAngle += angle;
       totalDifference += difference;
       
-      // More lenient: good frames within ±20° of reference (was ±10°)
       if (difference <= 20) goodFrames++;
     });
     
-    if (validFrames === 0) return; // Skip if no valid frames
+    if (validFrames === 0) {
+      ratings[joint] = {
+        averageAngle: 0,
+        averageDifference: 0,
+        goodFrames: 0,
+        totalFrames: 0,
+        rating: 0,
+        status: 'poor' as const,
+      };
+      return;
+    }
     
     const avgAngle = totalAngle / validFrames;
     const avgDifference = totalDifference / validFrames;
     
-    // More lenient rating calculation:
-    // - Start deducting only after 15° difference (was 5°)
-    // - Use multiplier of 2 instead of 4
-    // - Minimum rating of 40 instead of 0
     let rating = 100;
     if (avgDifference > 15) {
       rating = Math.max(40, 100 - (avgDifference - 15) * 2);
     }
     
-    // More lenient status thresholds
     let status: 'excellent' | 'good' | 'needs-improvement' | 'poor';
     if (rating >= 85) status = 'excellent';
     else if (rating >= 70) status = 'good';
@@ -406,40 +250,4 @@ function calculateAverageRatings(
   });
   
   return ratings as JointRatings;
-}
-
-function calculateMovementBreakdown(
-  frames: FrameAnalysis[],
-  refAnglesByMovement: Record<TennisMovement, JointAngles>
-): MovementBreakdown {
-  const movements: TennisMovement[] = ['ready-position', 'serve-ready', 'groundstroke', 'serve', 'unknown'];
-  const breakdown: any = {};
-
-  movements.forEach((movement) => {
-    const movementFrames = frames.filter((f) => f.movement.movement === movement);
-    
-    if (movementFrames.length === 0) {
-      breakdown[movement] = {
-        frameCount: 0,
-        averageRatings: {} as JointRatings,
-        overallScore: 0,
-      };
-      return;
-    }
-
-    // Use movement-specific reference angles
-    const averageRatings = calculateAverageRatings(movementFrames, refAnglesByMovement[movement]);
-    const overallScore = Object.values(averageRatings).reduce(
-      (sum, rating) => sum + rating.rating,
-      0
-    ) / Object.keys(averageRatings).length;
-
-    breakdown[movement] = {
-      frameCount: movementFrames.length,
-      averageRatings,
-      overallScore,
-    };
-  });
-
-  return breakdown as MovementBreakdown;
 }
