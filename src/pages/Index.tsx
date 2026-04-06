@@ -93,7 +93,7 @@ export default function Index() {
       console.error('Error fetching quota:', error);
     }
   };
-  const handleReferenceSet = async (data: string, _angles: JointAngles, videoFile?: File) => {
+  const handleReferenceSet = async (data: string, _angles: JointAngles, videoFile?: File, skipPoseDetection?: boolean) => {
     if (!data) {
       // Reset reference
       setReferenceImage(null);
@@ -108,6 +108,19 @@ export default function Index() {
       await new Promise(resolve => {
         img.onload = resolve;
       });
+
+      if (skipPoseDetection) {
+        // Use default reference angles directly (e.g. for default video)
+        setReferenceImage(data);
+        setReferenceAngles(DEFAULT_REFERENCE_ANGLES);
+        setReferenceVideo(videoFile || null);
+        toast({
+          title: 'Reference Pose Set',
+          description: 'Default rally reference loaded.'
+        });
+        return;
+      }
+
       const keypoints = await estimatePoseFromImage(img);
       if (!keypoints) {
         toast({
@@ -119,12 +132,9 @@ export default function Index() {
         return;
       }
 
-      // Draw pose on canvas for reference
       const canvas = document.createElement('canvas');
       drawPoseOnCanvas(canvas, img, keypoints);
       const referenceCanvas = canvas.toDataURL();
-
-      // Calculate reference angles using your algorithm
       const angles = calculateJointAngles(keypoints);
       setReferenceImage(referenceCanvas);
       setReferenceAngles(angles);
