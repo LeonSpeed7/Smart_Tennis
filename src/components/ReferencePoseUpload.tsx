@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { estimatePoseFromImage } from '@/lib/poseEstimation';
 import defaultReferenceImage from '@/assets/default-reference-pose.png';
+import defaultReferenceVideoFrame from '@/assets/default-reference-rally-frame.jpg';
 const defaultReferenceVideo = '/default-reference-rally.mp4';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
@@ -36,6 +37,32 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error('Could not load frame image'));
     image.src = src;
   });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error('Could not read asset data'));
+    };
+    reader.onerror = () => reject(new Error('Could not read asset data'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchAssetAsDataUrl(src: string): Promise<string> {
+  const response = await fetch(src);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load asset: ${src}`);
+  }
+
+  return blobToDataUrl(await response.blob());
 }
 
 function getVideoSearchTimestamps(duration: number): number[] {
@@ -171,6 +198,16 @@ export function ReferencePoseUpload({
   const [hasLoadedDefault, setHasLoadedDefault] = useState(false);
   const { toast } = useToast();
 
+  const updateSelectedVideo = (nextUrl: string | null) => {
+    setSelectedVideo((currentUrl) => {
+      if (currentUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(currentUrl);
+      }
+
+      return nextUrl;
+    });
+  };
+
   useEffect(() => {
     return () => {
       if (selectedVideo?.startsWith('blob:')) {
@@ -189,28 +226,27 @@ export function ReferencePoseUpload({
 
   const loadDefaultReference = async (type: DefaultReferenceType) => {
     if (type === 'video' && defaultReferenceVideo) {
-      // Load default video and extract first frame
+      setIsProcessingVideo(true);
+
       try {
-        const videoBlob = await fetch(defaultReferenceVideo).then(res => res.blob());
-        const videoFile = new File([videoBlob], 'default-reference-video.mp4', { type: 'video/mp4' });
-        await handleVideoSelect(videoFile);
+        updateSelectedVideo(defaultReferenceVideo);
+        const imageData = await fetchAssetAsDataUrl(defaultReferenceVideoFrame);
+        onReferenceSet(imageData, {} as JointAngles);
       } catch (error) {
         console.error('Error loading default video:', error);
         toast({
           title: 'Error',
-          description: 'Failed to load default video. Please select manually.',
+          description: 'Failed to load the built-in rally reference. Please select manually.',
           variant: 'destructive',
         });
+      } finally {
+        setIsProcessingVideo(false);
       }
     } else if (type === 'image') {
-      // Load default image
       try {
-        const blob = await fetch(defaultReferenceImage).then(res => res.blob());
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          onReferenceSet(reader.result as string, {} as JointAngles);
-        };
-        reader.readAsDataURL(blob);
+        updateSelectedVideo(null);
+        const imageData = await fetchAssetAsDataUrl(defaultReferenceImage);
+        onReferenceSet(imageData, {} as JointAngles);
       } catch (error) {
         console.error('Error loading default image:', error);
         toast({
@@ -226,13 +262,7 @@ export function ReferencePoseUpload({
     setIsProcessingVideo(true);
 
     const previewUrl = URL.createObjectURL(videoFile);
-    setSelectedVideo((currentUrl) => {
-      if (currentUrl?.startsWith('blob:')) {
-        URL.revokeObjectURL(currentUrl);
-      }
-
-      return previewUrl;
-    });
+    updateSelectedVideo(previewUrl);
     
     try {
       const imageData = await findReferenceFrameFromVideo(videoFile);
@@ -419,7 +449,7 @@ export function ReferencePoseUpload({
                 </Button>
               </label>
               <p className="text-xs text-muted-foreground text-center">
-                First frame will be used as reference
+                We’ll scan the clip for a clear player frame to use as the reference
               </p>
             </div>
           </TabsContent>
