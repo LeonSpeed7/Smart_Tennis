@@ -182,7 +182,7 @@ async function findReferenceFrameFromVideo(videoFile: File): Promise<string> {
 }
 
 interface ReferencePoseUploadProps {
-  onReferenceSet: (imageData: string, angles: JointAngles, videoFile?: File) => void;
+  onReferenceSet: (imageData: string, angles: JointAngles, videoFile?: File, skipPoseDetection?: boolean) => void;
   referenceImage: string | null;
   referenceAngles: JointAngles | null;
 }
@@ -231,7 +231,7 @@ export function ReferencePoseUpload({
       try {
         updateSelectedVideo(defaultReferenceVideo);
         const imageData = await fetchAssetAsDataUrl(defaultReferenceVideoFrame);
-        onReferenceSet(imageData, {} as JointAngles);
+        onReferenceSet(imageData, {} as JointAngles, undefined, true);
       } catch (error) {
         console.error('Error loading default video:', error);
         toast({
