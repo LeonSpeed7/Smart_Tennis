@@ -2,7 +2,7 @@
 
 ## Project info
 
-**URL**: https://tennisfeedback.lovable.app/
+**URL**: https://smart7tennis.vercel.app/
 
 
 ## What technologies are used for this project?
