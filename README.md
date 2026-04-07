@@ -3,8 +3,9 @@
 ## Project info
 
 **URL**: https://smart7tennis.vercel.app/
-remixxed original project due to technical issues with updating it.
-link to that below:
+
+
+remixxed original project due to technical issues with updating it and the link to that is below:
 **URL**: https://tennisfeedback.lovable.app/
 
 
