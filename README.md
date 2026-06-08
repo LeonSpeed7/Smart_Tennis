@@ -18,10 +18,8 @@ AI tools:
 - Gemini 2.5 Flash for chatbot to provide users with feedback
 - Saiwa AI for pose estimation( uses OpenPose)
 
-Front End:
+Others:
 - Lovable to prototype
-
-Backend:
 - python to store math functions(Eclidean etc.)
 
 ## video analysis
