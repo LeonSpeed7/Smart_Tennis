@@ -1,4 +1,4 @@
-# Tennis Instant Feedback(ADD README from other doc)
+# Tennis Instant Feedback
 
 ## Project info
 
@@ -6,6 +6,9 @@
 
 
 remixxed original project due to technical issues with updating it and the link to that is: https://tennisfeedback.lovable.app/
+
+Tennis shot analysis is critical for consistently improving. Specifically, a single shot can determine the result of an entire match which is why it is important to analyze every shot. Automatic tennis feedback is currently still in development and the most advanced technologies are only used by professional tennis players. However, post shot analysis can help players of all skill levels improve and my goal is to make this more accessible to a larger audience. The goal of this project is to eventually create a tennis system that provides post shot feedback for tennis players. While the prominent competitor SwingVision uses advanced technology to provide feedback, their feedback is more about ball placement and is a short video replay. The bigger problem is that a player can only view this feedback once they finish a practice session or a game. In a match it is insignificant to view the feedback after you finished the match because you cannot change what already occurred in the past. Rather, receiving the feedback during play or during break times allows for improvement on the spot. 
+
 
 
 ## What technologies are used for this project?
@@ -22,6 +25,7 @@ This project is built with:
 ## video analysis
 
 ### Ready Position:
+These are the accurate angles for ready position which is what I use to determine how good a tennis stroke is.
 Knees bent (90-120°)
 Hips slightly bent (150-170°)
 Elbows bent (80-120°)
