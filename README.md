@@ -13,14 +13,15 @@ Tennis shot analysis is critical for consistently improving. Specifically, a sin
 
 ## What technologies are used for this project?
 
-This project is built with:
+AI tools:
+- Gemini 2.5 Flash for chatbot to provide users with feedback
+- Saiwa AI for pose estimation( uses OpenPose)
 
-- Vite
-- TypeScript
-- React
-- python
-- json
-- Tailwind CSS
+Front End:
+- Lovable to prototype
+
+Backend:
+- python to store math and use ai tools
 
 ## video analysis
 
