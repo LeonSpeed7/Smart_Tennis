@@ -22,7 +22,7 @@ Front End:
 - Lovable to prototype
 
 Backend:
-- python to store math and use ai tools
+- python to store math functions(Eclidean etc.)
 
 ## video analysis
 
